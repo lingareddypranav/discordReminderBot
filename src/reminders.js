@@ -1,17 +1,17 @@
 const db = require('./database');
 const { spotifyApi, getAccessToken } = require('./spotify');
 const cron = require('node-cron');
-// Set a reminder
 
+// Set a reminder
 function setReminder(client, userId, task, channelId) {
     const interval = 3600000; // 1 hour in milliseconds
-    db.run(`INSERT INTO reminders (userId, task, channelId, interval) VALUES (?, ?, ?, ?)`, [userId, task, channelId, interval], function(err) {
+    db.query(`INSERT INTO reminders (userId, task, channelId, interval) VALUES ($1, $2, $3, $4)`, [userId, task, channelId, interval], (err, res) => {
         if (err) {
             client.channels.cache.get(channelId).send(`Error setting reminder: ${err.message}`);
             return;
         }
         client.channels.cache.get(channelId).send(`Ok, I will remind you about "${task}" every hour!`);
-        const intervalId = setInterval(() => {
+        setInterval(() => {
             client.channels.cache.get(channelId).send(`<@${userId}>, don't forget to: ${task}`);
         }, interval);
     });
@@ -19,16 +19,16 @@ function setReminder(client, userId, task, channelId) {
 
 // Stop a reminder
 function stopReminder(client, userId, task, channelId) {
-    db.get(`SELECT id FROM reminders WHERE userId = ? AND task = ?`, [userId, task], (err, row) => {
+    db.query(`SELECT id FROM reminders WHERE userId = $1 AND task = $2`, [userId, task], (err, res) => {
         if (err) {
             client.channels.cache.get(channelId).send(`Error stopping reminder: ${err.message}`);
             return;
         }
-        if (!row) {
+        if (res.rows.length === 0) {
             client.channels.cache.get(channelId).send(`No active reminder found for "${task}".`);
             return;
         }
-        db.run(`DELETE FROM reminders WHERE id = ?`, row.id, (err) => {
+        db.query(`DELETE FROM reminders WHERE id = $1`, [res.rows[0].id], (err) => {
             if (err) {
                 client.channels.cache.get(channelId).send(`Error removing reminder: ${err.message}`);
                 return;
@@ -40,20 +40,22 @@ function stopReminder(client, userId, task, channelId) {
 
 // Restore reminders on bot startup
 function restoreReminders(client) {
-    db.each(`SELECT userId, task, channelId, interval FROM reminders`, (err, row) => {
+    db.query(`SELECT userId, task, channelId, interval FROM reminders`, (err, res) => {
         if (err) {
             console.error(err.message);
             return;
         }
-        const intervalId = setInterval(() => {
-            client.channels.cache.get(row.channelId).send(`<@${row.userId}>, don't forget to: ${row.task}`);
-        }, row.interval);
+        res.rows.forEach(row => {
+            setInterval(() => {
+                client.channels.cache.get(row.channelId).send(`<@${row.userId}>, don't forget to: ${row.task}`);
+            }, row.interval);
+        });
     });
 }
 
 // Set a favorite artist and immediately check for new releases
 function setFavoriteArtist(client, userId, artistName, channelId) {
-    db.run(`INSERT INTO favorite_artists (userId, artistName, lastChecked) VALUES (?, ?, date('now'))`, [userId, artistName], function(err) {
+    db.query(`INSERT INTO favorite_artists (userId, artistName, lastChecked) VALUES ($1, $2, NOW())`, [userId, artistName], function(err) {
         if (err) {
             client.channels.cache.get(channelId).send(`Error setting favorite artist: ${err.message}`);
             return;
@@ -85,7 +87,7 @@ async function checkNewReleaseForArtist(client, userId, artistName, channelId) {
 
             if (recentReleases.length > 0) {
                 client.channels.cache.get(channelId).send(`<@${userId}>, your favorite artist ${artistName} has released music this week!`);
-                db.run(`UPDATE favorite_artists SET lastChecked = date('now') WHERE userId = ? AND artistName = ?`, [userId, artistName]);
+                db.query(`UPDATE favorite_artists SET lastChecked = NOW() WHERE userId = $1 AND artistName = $2`, [userId, artistName]);
             } else {
                 client.channels.cache.get(channelId).send(`<@${userId}>, your favorite artist ${artistName} has not released any new music this week.`);
             }
@@ -97,20 +99,18 @@ async function checkNewReleaseForArtist(client, userId, artistName, channelId) {
     }
 }
 
-// Existing function to check all artists
+// Check all artists for new releases
 async function checkNewReleases(client) {
     await getAccessToken(); // Refresh the access token
 
-    db.all(`SELECT id, userId, artistName, channelId FROM favorite_artists`, async (err, rows) => {
-        if (err) {
-            console.error(`Error fetching favorite artists: ${err.message}`);
-            return;
-        }
-
-        for (const row of rows) {
+    try {
+        const res = await db.query(`SELECT id, userId, artistName, channelId FROM favorite_artists`);
+        for (const row of res.rows) {
             await checkNewReleaseForArtist(client, row.userId, row.artistName, row.channelId);
         }
-    });
+    } catch (err) {
+        console.error(`Error fetching favorite artists: ${err.message}`);
+    }
 }
 
 // Schedule the check to run daily at midnight

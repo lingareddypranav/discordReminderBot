@@ -1,27 +1,39 @@
-const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('./reminders.db', (err) => {
-    if (err) {
-        console.error(err.message);
-    } else {
-        console.log('Connected to the reminders database.');
+const { Client } = require('pg');
+
+// Initialize the PostgreSQL client
+const db = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false // Important for avoiding SSL issues in cloud environments
     }
 });
 
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS reminders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+db.connect();
+
+// Create tables if they do not exist
+db.query(`
+    CREATE TABLE IF NOT EXISTS reminders (
+        id SERIAL PRIMARY KEY,
         userId TEXT NOT NULL,
         task TEXT NOT NULL,
         channelId TEXT NOT NULL,
         interval INTEGER NOT NULL
-    )`);
+    )
+`, (err, res) => {
+    if (err) throw err;
+    console.log('Reminders table is ready');
+});
 
-    db.run(`CREATE TABLE IF NOT EXISTS favorite_artists (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+db.query(`
+    CREATE TABLE IF NOT EXISTS favorite_artists (
+        id SERIAL PRIMARY KEY,
         userId TEXT NOT NULL,
         artistName TEXT NOT NULL,
         lastChecked DATE
-    )`);
+    )
+`, (err, res) => {
+    if (err) throw err;
+    console.log('Favorite artists table is ready');
 });
 
 module.exports = db;
